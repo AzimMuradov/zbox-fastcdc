@@ -5,6 +5,8 @@ use std::ptr;
 
 use serde::{Deserialize, Serialize};
 
+use crate::content::gear_arr::{GEAR, GEAR_LS};
+
 // taken from pcompress implementation
 // https://github.com/moinakg/pcompress
 const PRIME: u64 = 153_191u64;
@@ -20,12 +22,16 @@ const FP_POLY: u64 = 0xbfe6_b8a5_bf37_8d83u64;
 // needs to target (AVG_SIZE - MIN_SIZE) cut length,
 // note the (AVG_SIZE - MIN_SIZE) must be 2^n
 const CUT_MASK: u64 = (AVG_SIZE - MIN_SIZE - 1) as u64;
+const MASK_S: u64 = 0x0000d90313530000;
+const MASK_S_LS: u64 = MASK_S << 1;
+const MASK_L: u64 = 0x0000d90303537000;
+const MASK_L_LS: u64 = MASK_L << 1;
 
 // rolling hash window constants
 const WIN_SIZE: usize = 16; // must be 2^n
 const WIN_MASK: usize = WIN_SIZE - 1;
 const WIN_SLIDE_OFFSET: usize = 64;
-const WIN_SLIDE_POS: usize = MIN_SIZE - WIN_SLIDE_OFFSET;
+const WIN_SLIDE_POS: usize = MIN_SIZE;
 
 // writer buffer length
 const WTR_BUF_LEN: usize = 8 * MAX_SIZE;
@@ -138,54 +144,73 @@ impl<W: Write + Seek> Write for Chunker<W> {
         self.buf_clen += in_len;
 
         while self.pos < self.buf_clen {
-            // get current byte and pushed out byte
-            let ch = self.buf[self.pos];
-            let out = self.win[self.win_idx] as usize;
-            let pushed_out = self.params.out_map[out];
+            let remaining = self.buf_clen;
+            let center = min(
+                self.pos - self.chunk_len + AVG_SIZE,
+                remaining
+            );
 
-            // calculate Rabin rolling hash
-            self.roll_hash = (self.roll_hash * PRIME) & MASK;
-            self.roll_hash += u64::from(ch);
-            self.roll_hash = self.roll_hash.wrapping_sub(pushed_out) & MASK;
-
-            // forward circle window
-            self.win[self.win_idx] = ch;
-            self.win_idx = (self.win_idx + 1) & WIN_MASK;
-
-            self.chunk_len += 1;
-            self.pos += 1;
-
-            if self.chunk_len >= MIN_SIZE {
-                let chksum = self.roll_hash ^ self.params.ir[out];
-
-                // reached cut point, chunk can be produced now
-                if (chksum & CUT_MASK) == 0 || self.chunk_len >= MAX_SIZE {
-                    // write the chunk to destination writer,
-                    // ensure it is consumed in whole
-                    let p = self.pos - self.chunk_len;
-                    let written = self.dst.write(&self.buf[p..self.pos])?;
-                    assert_eq!(written, self.chunk_len);
-
-                    // not enough space in buffer, copy remaining to
-                    // the head of buffer and reset buf position
-                    if self.pos + MAX_SIZE >= WTR_BUF_LEN {
-                        let left_len = self.buf_clen - self.pos;
-                        unsafe {
-                            ptr::copy::<u8>(
-                                self.buf[self.pos..].as_ptr(),
-                                self.buf.as_mut_ptr(),
-                                left_len,
-                            );
-                        }
-                        self.buf_clen = left_len;
-                        self.pos = 0;
-                    }
-
-                    // jump to next start sliding position
-                    self.pos += WIN_SLIDE_POS;
-                    self.chunk_len = WIN_SLIDE_POS;
+            while self.pos < center - 1 {
+                self.roll_hash = (self.roll_hash << 2)
+                    .wrapping_add(GEAR_LS[self.buf[self.pos] as usize]);
+                if (self.roll_hash & MASK_S_LS) == 0 {
+                    break;
                 }
+                self.chunk_len += 1;
+                self.pos += 1;
+
+                self.roll_hash = self
+                    .roll_hash
+                    .wrapping_add(GEAR[self.buf[self.pos] as usize]);
+                if (self.roll_hash & MASK_S) == 0 {
+                    break;
+                }
+                self.chunk_len += 1;
+                self.pos += 1;
             }
+            while self.pos < remaining - 1 {
+                self.roll_hash = (self.roll_hash << 2)
+                    .wrapping_add(GEAR_LS[self.buf[self.pos] as usize]);
+                if (self.roll_hash & MASK_L_LS) == 0 {
+                    break;
+                }
+                self.chunk_len += 1;
+                self.pos += 1;
+
+                self.roll_hash = self
+                    .roll_hash
+                    .wrapping_add(GEAR[self.buf[self.pos] as usize]);
+                if (self.roll_hash & MASK_L) == 0 {
+                    break;
+                }
+                self.chunk_len += 1;
+                self.pos += 1;
+            }
+
+            // write the chunk to destination writer,
+            // ensure it is consumed in whole
+            let p = self.pos - self.chunk_len;
+            let written = self.dst.write(&self.buf[p..self.pos])?;
+            assert_eq!(written, self.chunk_len);
+
+            // not enough space in buffer, copy remaining to
+            // the head of buffer and reset buf position
+            if self.pos + MAX_SIZE >= WTR_BUF_LEN {
+                let left_len = self.buf_clen - self.pos;
+                unsafe {
+                    ptr::copy::<u8>(
+                        self.buf[self.pos..].as_ptr(),
+                        self.buf.as_mut_ptr(),
+                        left_len,
+                    );
+                }
+                self.buf_clen = left_len;
+                self.pos = 0;
+            }
+
+            // jump to next start sliding position
+            self.pos += WIN_SLIDE_POS;
+            self.chunk_len = WIN_SLIDE_POS;
         }
 
         Ok(in_len)
