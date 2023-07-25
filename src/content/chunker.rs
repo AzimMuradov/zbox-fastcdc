@@ -1,3 +1,4 @@
+use fastcdc::v2020::FastCDC;
 use std::cmp::min;
 use std::fmt::{self, Debug};
 use std::io::{Result as IoResult, Seek, SeekFrom, Write};
@@ -144,48 +145,20 @@ impl<W: Write + Seek> Write for Chunker<W> {
         self.buf_clen += in_len;
 
         while self.pos < self.buf_clen {
-            let remaining = self.buf_clen;
-            let center = min(
-                self.pos - self.chunk_len + AVG_SIZE,
-                remaining
-            );
+            self.pos -= MIN_SIZE;
+            self.chunk_len -= MIN_SIZE;
 
-            while self.pos < center - 1 {
-                self.roll_hash = (self.roll_hash << 2)
-                    .wrapping_add(GEAR_LS[self.buf[self.pos] as usize]);
-                if (self.roll_hash & MASK_S_LS) == 0 {
-                    break;
-                }
-                self.chunk_len += 1;
-                self.pos += 1;
+            let (hash, cut_point) = FastCDC::new(
+                &*self.buf,
+                MIN_SIZE as u32,
+                AVG_SIZE as u32,
+                MAX_SIZE as u32,
+            )
+            .cut(self.pos, self.buf_clen - self.pos);
 
-                self.roll_hash = self
-                    .roll_hash
-                    .wrapping_add(GEAR[self.buf[self.pos] as usize]);
-                if (self.roll_hash & MASK_S) == 0 {
-                    break;
-                }
-                self.chunk_len += 1;
-                self.pos += 1;
-            }
-            while self.pos < remaining - 1 {
-                self.roll_hash = (self.roll_hash << 2)
-                    .wrapping_add(GEAR_LS[self.buf[self.pos] as usize]);
-                if (self.roll_hash & MASK_L_LS) == 0 {
-                    break;
-                }
-                self.chunk_len += 1;
-                self.pos += 1;
-
-                self.roll_hash = self
-                    .roll_hash
-                    .wrapping_add(GEAR[self.buf[self.pos] as usize]);
-                if (self.roll_hash & MASK_L) == 0 {
-                    break;
-                }
-                self.chunk_len += 1;
-                self.pos += 1;
-            }
+            self.roll_hash = hash;
+            self.chunk_len += cut_point - self.pos;
+            self.pos = cut_point;
 
             // write the chunk to destination writer,
             // ensure it is consumed in whole
