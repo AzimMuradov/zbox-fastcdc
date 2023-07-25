@@ -6,7 +6,6 @@ mod chunk;
 mod chunker;
 mod content;
 mod entry;
-mod gear_arr;
 mod merkle_tree;
 mod segment;
 mod span;

@@ -4,27 +4,9 @@ use std::fmt::{self, Debug};
 use std::io::{Result as IoResult, Seek, SeekFrom, Write};
 use std::ptr;
 
-use serde::{Deserialize, Serialize};
-
-// taken from pcompress implementation
-// https://github.com/moinakg/pcompress
-const PRIME: u64 = 153_191u64;
-const MASK: u64 = 0x00ff_ffff_ffffu64;
 const MIN_SIZE: usize = 16 * 1024; // minimal chunk size, 16k
 const AVG_SIZE: usize = 32 * 1024; // average chunk size, 32k
 const MAX_SIZE: usize = 64 * 1024; // maximum chunk size, 64k
-
-// Irreducible polynomial for Rabin modulus, from pcompress
-const FP_POLY: u64 = 0xbfe6_b8a5_bf37_8d83u64;
-
-// since we will skip MIN_SIZE when sliding window, it only
-// needs to target (AVG_SIZE - MIN_SIZE) cut length,
-// note the (AVG_SIZE - MIN_SIZE) must be 2^n
-const CUT_MASK: u64 = (AVG_SIZE - MIN_SIZE - 1) as u64;
-const MASK_S: u64 = 0x0000d90313530000;
-const MASK_S_LS: u64 = MASK_S << 1;
-const MASK_L: u64 = 0x0000d90303537000;
-const MASK_L_LS: u64 = MASK_L << 1;
 
 // writer buffer length
 const WTR_BUF_LEN: usize = 8 * MAX_SIZE;
