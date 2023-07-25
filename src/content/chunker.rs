@@ -6,8 +6,6 @@ use std::ptr;
 
 use serde::{Deserialize, Serialize};
 
-use crate::content::gear_arr::{GEAR, GEAR_LS};
-
 // taken from pcompress implementation
 // https://github.com/moinakg/pcompress
 const PRIME: u64 = 153_191u64;
