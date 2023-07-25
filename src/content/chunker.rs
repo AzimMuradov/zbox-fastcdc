@@ -28,98 +28,30 @@ const MASK_S_LS: u64 = MASK_S << 1;
 const MASK_L: u64 = 0x0000d90303537000;
 const MASK_L_LS: u64 = MASK_L << 1;
 
-// rolling hash window constants
-const WIN_SIZE: usize = 16; // must be 2^n
-const WIN_MASK: usize = WIN_SIZE - 1;
-const WIN_SLIDE_OFFSET: usize = 64;
-const WIN_SLIDE_POS: usize = MIN_SIZE;
-
 // writer buffer length
 const WTR_BUF_LEN: usize = 8 * MAX_SIZE;
 
-/// Pre-calculated chunker parameters
-#[derive(Clone, Deserialize, Serialize)]
-pub struct ChunkerParams {
-    poly_pow: u64,     // poly power
-    out_map: Vec<u64>, // pre-computed out byte map, length is 256
-    ir: Vec<u64>,      // irreducible polynomial, length is 256
-}
-
-impl ChunkerParams {
-    pub fn new() -> Self {
-        let mut cp = ChunkerParams::default();
-
-        // calculate poly power, it is actually PRIME ^ WIN_SIZE
-        for _ in 0..WIN_SIZE {
-            cp.poly_pow = (cp.poly_pow * PRIME) & MASK;
-        }
-
-        // pre-calculate out map table and irreducible polynomial
-        // for each possible byte, copy from PCompress implementation
-        for i in 0..256 {
-            cp.out_map[i] = (i as u64 * cp.poly_pow) & MASK;
-
-            let (mut term, mut pow, mut val) = (1u64, 1u64, 1u64);
-            for _ in 0..WIN_SIZE {
-                if (term & FP_POLY) != 0 {
-                    val += (pow * i as u64) & MASK;
-                }
-                pow = (pow * PRIME) & MASK;
-                term *= 2;
-            }
-            cp.ir[i] = val;
-        }
-
-        cp
-    }
-}
-
-impl Debug for ChunkerParams {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "ChunkerParams()")
-    }
-}
-
-impl Default for ChunkerParams {
-    fn default() -> Self {
-        let mut ret = ChunkerParams {
-            poly_pow: 1,
-            out_map: vec![0u64; 256],
-            ir: vec![0u64; 256],
-        };
-        ret.out_map.shrink_to_fit();
-        ret.ir.shrink_to_fit();
-        ret
-    }
-}
-
 /// Chunker
 pub struct Chunker<W: Write + Seek> {
-    dst: W,                // destination writer
-    params: ChunkerParams, // chunker parameters
+    dst: W, // destination writer
     pos: usize,
     chunk_len: usize,
     buf_clen: usize,
-    win_idx: usize,
     roll_hash: u64,
-    win: [u8; WIN_SIZE], // rolling hash circle window
-    buf: Vec<u8>,        // chunker buffer, fixed size: WTR_BUF_LEN
+    buf: Vec<u8>, // chunker buffer, fixed size: WTR_BUF_LEN
 }
 
 impl<W: Write + Seek> Chunker<W> {
-    pub fn new(params: ChunkerParams, dst: W) -> Self {
+    pub fn new(dst: W) -> Self {
         let mut buf = vec![0u8; WTR_BUF_LEN];
         buf.shrink_to_fit();
 
         Chunker {
             dst,
-            params,
-            pos: WIN_SLIDE_POS,
-            chunk_len: WIN_SLIDE_POS,
+            pos: MIN_SIZE,
+            chunk_len: MIN_SIZE,
             buf_clen: 0,
-            win_idx: 0,
             roll_hash: 0,
-            win: [0u8; WIN_SIZE],
             buf,
         }
     }
@@ -182,8 +114,8 @@ impl<W: Write + Seek> Write for Chunker<W> {
             }
 
             // jump to next start sliding position
-            self.pos += WIN_SLIDE_POS;
-            self.chunk_len = WIN_SLIDE_POS;
+            self.pos += MIN_SIZE;
+            self.chunk_len = MIN_SIZE;
         }
 
         Ok(in_len)
@@ -198,12 +130,10 @@ impl<W: Write + Seek> Write for Chunker<W> {
         }
 
         // reset chunker
-        self.pos = WIN_SLIDE_POS;
-        self.chunk_len = WIN_SLIDE_POS;
+        self.pos = MIN_SIZE;
+        self.chunk_len = MIN_SIZE;
         self.buf_clen = 0;
-        self.win_idx = 0;
         self.roll_hash = 0;
-        self.win = [0u8; WIN_SIZE];
 
         self.dst.flush()
     }
@@ -291,7 +221,6 @@ mod tests {
 
         // perpare test data
         const DATA_LEN: usize = 765 * 1024;
-        let params = ChunkerParams::new();
         let mut data = vec![0u8; DATA_LEN];
         Crypto::random_buf(&mut data);
         let mut cur = Cursor::new(data);
@@ -301,7 +230,7 @@ mod tests {
         };
 
         // test chunker
-        let mut ckr = Chunker::new(params, sinker);
+        let mut ckr = Chunker::new(sinker);
         let result = copy(&mut cur, &mut ckr);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), DATA_LEN as u64);
@@ -314,7 +243,6 @@ mod tests {
 
         // perpare test data
         const DATA_LEN: usize = 10 * 1024 * 1024;
-        let params = ChunkerParams::new();
         let mut data = vec![0u8; DATA_LEN];
         let seed = RandomSeed::from(&[0u8; RANDOM_SEED_SIZE]);
         Crypto::random_buf_deterministic(&mut data, &seed);
@@ -322,7 +250,7 @@ mod tests {
         let sinker = VoidSinker {};
 
         // test chunker performance
-        let mut ckr = Chunker::new(params, sinker);
+        let mut ckr = Chunker::new(sinker);
         let now = Instant::now();
         copy(&mut cur, &mut ckr).unwrap();
         ckr.flush().unwrap();
