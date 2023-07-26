@@ -1,3 +1,4 @@
+use fastcdc::v2020::FastCDC;
 use std::cmp::min;
 use std::fmt::{self, Debug};
 use std::io::{Result as IoResult, Seek, SeekFrom, Write};
@@ -223,6 +224,127 @@ impl<W: Write + Seek> Seek for Chunker<W> {
     }
 }
 
+
+/// Chunker
+pub struct FastCdcChunker<W: Write + Seek> {
+    dst: W, // destination writer
+    pos: usize,
+    chunk_len: usize,
+    buf_clen: usize, // current length
+    roll_hash: u64,
+    buf: Vec<u8>, // chunker buffer, fixed size: WTR_BUF_LEN
+}
+
+impl<W: Write + Seek> FastCdcChunker<W> {
+    pub fn new(dst: W) -> Self {
+        let mut buf = vec![0u8; WTR_BUF_LEN];
+        buf.shrink_to_fit();
+
+        FastCdcChunker {
+            dst,
+            pos: MIN_SIZE,
+            chunk_len: MIN_SIZE,
+            buf_clen: 0,
+            roll_hash: 0,
+            buf,
+        }
+    }
+
+    pub fn into_inner(mut self) -> IoResult<W> {
+        self.flush()?;
+        Ok(self.dst)
+    }
+}
+
+impl<W: Write + Seek> Write for FastCdcChunker<W> {
+    // consume bytes stream, output chunks
+    fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+
+        // copy source data into chunker buffer
+        let in_len = min(WTR_BUF_LEN - self.buf_clen, buf.len());
+        assert!(in_len > 0);
+        self.buf[self.buf_clen..self.buf_clen + in_len]
+            .copy_from_slice(&buf[..in_len]);
+        self.buf_clen += in_len;
+
+        while self.pos < self.buf_clen {
+            self.pos -= MIN_SIZE;
+
+            let (hash, cut_point) = FastCDC::new(
+                &*self.buf,
+                MIN_SIZE as u32,
+                AVG_SIZE as u32,
+                MAX_SIZE as u32,
+            )
+            .cut(self.pos, self.buf_clen - self.pos);
+
+            self.roll_hash = hash;
+            self.chunk_len = cut_point - self.pos;
+            self.pos = cut_point;
+
+            // write the chunk to destination writer,
+            // ensure it is consumed in whole
+            let p = self.pos - self.chunk_len;
+            let written = self.dst.write(&self.buf[p..self.pos])?;
+            assert_eq!(written, self.chunk_len);
+
+            // not enough space in buffer, copy remaining to
+            // the head of buffer and reset buf position
+            if self.pos + MAX_SIZE >= WTR_BUF_LEN {
+                let left_len = self.buf_clen - self.pos;
+                unsafe {
+                    ptr::copy::<u8>(
+                        self.buf[self.pos..].as_ptr(),
+                        self.buf.as_mut_ptr(),
+                        left_len,
+                    );
+                }
+                self.buf_clen = left_len;
+                self.pos = 0;
+            }
+
+            // jump to next start sliding position
+            self.pos += MIN_SIZE;
+            self.chunk_len = MIN_SIZE;
+        }
+
+        Ok(in_len)
+    }
+
+    fn flush(&mut self) -> IoResult<()> {
+        // flush remaining data to destination
+        let p = self.pos - self.chunk_len;
+        if p < self.buf_clen {
+            self.chunk_len = self.buf_clen - p;
+            let _ = self.dst.write(&self.buf[p..(p + self.chunk_len)])?;
+        }
+
+        // reset chunker
+        self.pos = MIN_SIZE;
+        self.chunk_len = MIN_SIZE;
+        self.buf_clen = 0;
+        self.roll_hash = 0;
+
+        self.dst.flush()
+    }
+}
+
+impl<W: Write + Seek> Debug for FastCdcChunker<W> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Chunker()")
+    }
+}
+
+impl<W: Write + Seek> Seek for FastCdcChunker<W> {
+    fn seek(&mut self, pos: SeekFrom) -> IoResult<u64> {
+        self.dst.seek(pos)
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use std::io::{copy, Cursor, Result as IoResult, Seek, SeekFrom, Write};
@@ -233,6 +355,7 @@ mod tests {
     use crate::base::init_env;
     use crate::base::utils::speed_str;
     use crate::content::chunk::Chunk;
+    use test::Bencher;
 
     #[derive(Debug)]
     struct Sinker {
@@ -310,26 +433,44 @@ mod tests {
         ckr.flush().unwrap();
     }
 
-    #[test]
-    fn chunker_perf() {
-        init_env();
+    #[bench]
+    fn chunker_perf(b: &mut Bencher) {
+        b.iter(|| {
+            init_env();
 
-        // perpare test data
-        const DATA_LEN: usize = 10 * 1024 * 1024;
-        let params = ChunkerParams::new();
-        let mut data = vec![0u8; DATA_LEN];
-        let seed = RandomSeed::from(&[0u8; RANDOM_SEED_SIZE]);
-        Crypto::random_buf_deterministic(&mut data, &seed);
-        let mut cur = Cursor::new(data);
-        let sinker = VoidSinker {};
+            // perpare test data
+            const DATA_LEN: usize = 10 * 1024 * 1024;
+            let params = ChunkerParams::new();
+            let mut data = vec![0u8; DATA_LEN];
+            let seed = RandomSeed::from(&[0u8; RANDOM_SEED_SIZE]);
+            Crypto::random_buf_deterministic(&mut data, &seed);
+            let mut cur = Cursor::new(data);
+            let sinker = VoidSinker {};
 
-        // test chunker performance
-        let mut ckr = Chunker::new(params, sinker);
-        let now = Instant::now();
-        copy(&mut cur, &mut ckr).unwrap();
-        ckr.flush().unwrap();
-        let time = now.elapsed();
+            // test chunker performance
+            let mut ckr = Chunker::new(params, sinker);
+            copy(&mut cur, &mut ckr).unwrap();
+            ckr.flush().unwrap();
+        });
+    }
 
-        println!("Chunker perf: {}", speed_str(&time, DATA_LEN));
+    #[bench]
+    fn fastcdc_chunker_perf(b: &mut Bencher) {
+        b.iter(|| {
+            init_env();
+
+            // perpare test data
+            const DATA_LEN: usize = 10 * 1024 * 1024;
+            let mut data = vec![0u8; DATA_LEN];
+            let seed = RandomSeed::from(&[0u8; RANDOM_SEED_SIZE]);
+            Crypto::random_buf_deterministic(&mut data, &seed);
+            let mut cur = Cursor::new(data);
+            let sinker = VoidSinker {};
+
+            // test chunker performance
+            let mut ckr = FastCdcChunker::new(sinker);
+            copy(&mut cur, &mut ckr).unwrap();
+            ckr.flush().unwrap();
+        });
     }
 }

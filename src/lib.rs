@@ -95,6 +95,10 @@
 //! [`File`]: struct.File.html
 //! [`RepoOpener`]: struct.RepoOpener.html
 
+#![feature(test)]
+
+extern crate test;
+
 // convert zbox error to IO error
 macro_rules! map_io_err {
     ($x:expr) => {
