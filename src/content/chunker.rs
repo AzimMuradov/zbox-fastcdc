@@ -16,7 +16,7 @@ pub struct Chunker<W: Write + Seek> {
     dst: W, // destination writer
     pos: usize,
     chunk_len: usize,
-    buf_clen: usize,
+    buf_clen: usize, // current length
     roll_hash: u64,
     buf: Vec<u8>, // chunker buffer, fixed size: WTR_BUF_LEN
 }
@@ -58,7 +58,6 @@ impl<W: Write + Seek> Write for Chunker<W> {
 
         while self.pos < self.buf_clen {
             self.pos -= MIN_SIZE;
-            self.chunk_len -= MIN_SIZE;
 
             let (hash, cut_point) = FastCDC::new(
                 &*self.buf,
@@ -69,7 +68,7 @@ impl<W: Write + Seek> Write for Chunker<W> {
             .cut(self.pos, self.buf_clen - self.pos);
 
             self.roll_hash = hash;
-            self.chunk_len += cut_point - self.pos;
+            self.chunk_len = cut_point - self.pos;
             self.pos = cut_point;
 
             // write the chunk to destination writer,
