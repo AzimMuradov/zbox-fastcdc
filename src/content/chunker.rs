@@ -401,7 +401,7 @@ pub struct FixedSizeChunker<W: Write + Seek> {
     pos: usize,
     chunk_len: usize,
     buf_clen: usize, // current length
-    buf: Vec<u8>, // chunker buffer, fixed size: WTR_BUF_LEN
+    buf: Vec<u8>,    // chunker buffer, fixed size: WTR_BUF_LEN
 }
 
 impl<W: Write + Seek> FixedSizeChunker<W> {
@@ -665,13 +665,17 @@ mod tests {
     #[test]
     fn fsc_chunker_compression_all() {
         for chunk_size in KB_ALL {
-            fsc_chunker_compression(LNX, chunk_size);
+            for ds in ALL_DS {
+                fsc_chunker_compression(ds, chunk_size);
+            }
         }
     }
 
     #[test]
     fn chunker_compression_all() {
-        chunker_compression(LNX);
+        for ds in ALL_DS {
+            chunker_compression(ds);
+        }
     }
 
     #[test]
@@ -679,10 +683,12 @@ mod tests {
         for min_size in KB_SMALL {
             for avg_size in KB_SMALL.iter().filter(|kb| **kb >= min_size) {
                 for max_size in KB_ALL.iter().filter(|kb| **kb > *avg_size) {
-                    for lvl in LVLS {
-                        fastcdc_chunker_compression(
-                            LNX, min_size, *avg_size, *max_size, lvl,
-                        );
+                    for ds in ALL_DS {
+                        for lvl in LVLS {
+                            fastcdc_chunker_compression(
+                                ds, min_size, *avg_size, *max_size, lvl,
+                            );
+                        }
                     }
                 }
             }
@@ -690,6 +696,9 @@ mod tests {
     }
 
     const LNX: &str = "/home/graywolf/dev/learn/university/summer-school-2023/project/data-sets/linux-6.4.5-dups.tar";
+    const UBN: &str = "/home/graywolf/dev/learn/university/summer-school-2023/project/ubuntu-22.04.2-desktop-amd64.iso";
+
+    const ALL_DS: [&str; 2] = [LNX, UBN];
 
     const KB_2: usize = 2 * 1024;
     const KB_4: usize = 4 * 1024;
