@@ -603,19 +603,15 @@ mod tests {
 
     #[bench]
     fn fsc_chunker_perf(b: &mut Bencher) {
+        let vec = std::fs::read(LNX).unwrap();
+
         b.iter(|| {
             init_env();
 
-            // perpare test data
-            const DATA_LEN: usize = 10 * 1024 * 1024;
-            let mut data = vec![0u8; DATA_LEN];
-            let seed = RandomSeed::from(&[0u8; RANDOM_SEED_SIZE]);
-            Crypto::random_buf_deterministic(&mut data, &seed);
-            let mut cur = Cursor::new(data);
+            let mut cur = Cursor::new(&vec);
             let sinker = VoidSinker {};
 
-            // test chunker performance
-            let mut ckr = FixedSizeChunker::new(sinker);
+            let mut ckr = FixedSizeChunker::fine_tuned(sinker, KB_2);
             copy(&mut cur, &mut ckr).unwrap();
             ckr.flush().unwrap();
         });
@@ -623,20 +619,15 @@ mod tests {
 
     #[bench]
     fn chunker_perf(b: &mut Bencher) {
+        let vec = std::fs::read(LNX).unwrap();
+
         b.iter(|| {
             init_env();
 
-            // perpare test data
-            const DATA_LEN: usize = 10 * 1024 * 1024;
-            let params = ChunkerParams::new();
-            let mut data = vec![0u8; DATA_LEN];
-            let seed = RandomSeed::from(&[0u8; RANDOM_SEED_SIZE]);
-            Crypto::random_buf_deterministic(&mut data, &seed);
-            let mut cur = Cursor::new(data);
+            let mut cur = Cursor::new(&vec);
             let sinker = VoidSinker {};
 
-            // test chunker performance
-            let mut ckr = Chunker::new(params, sinker);
+            let mut ckr = Chunker::new(ChunkerParams::new(), sinker);
             copy(&mut cur, &mut ckr).unwrap();
             ckr.flush().unwrap();
         });
@@ -644,19 +635,21 @@ mod tests {
 
     #[bench]
     fn fastcdc_chunker_perf(b: &mut Bencher) {
+        let vec = std::fs::read(LNX).unwrap();
+
         b.iter(|| {
             init_env();
 
-            // perpare test data
-            const DATA_LEN: usize = 10 * 1024 * 1024;
-            let mut data = vec![0u8; DATA_LEN];
-            let seed = RandomSeed::from(&[0u8; RANDOM_SEED_SIZE]);
-            Crypto::random_buf_deterministic(&mut data, &seed);
-            let mut cur = Cursor::new(data);
+            let mut cur = Cursor::new(&vec);
             let sinker = VoidSinker {};
 
-            // test chunker performance
-            let mut ckr = FastCdcChunker::new(sinker);
+            let mut ckr = FastCdcChunker::fine_tuned(
+                sinker,
+                KB_2,
+                KB_2,
+                KB_4,
+                Normalization::Level3,
+            );
             copy(&mut cur, &mut ckr).unwrap();
             ckr.flush().unwrap();
         });
@@ -696,7 +689,7 @@ mod tests {
     }
 
     const LNX: &str = "/home/graywolf/dev/learn/university/summer-school-2023/project/data-sets/linux-6.4.5-dups.tar";
-    const UBN: &str = "/home/graywolf/dev/learn/university/summer-school-2023/project/ubuntu-22.04.2-desktop-amd64.iso";
+    const UBN: &str = "/home/graywolf/dev/learn/university/summer-school-2023/project/data-sets/ubuntu-22.04.2-desktop-amd64.iso";
 
     const ALL_DS: [&str; 2] = [LNX, UBN];
 
