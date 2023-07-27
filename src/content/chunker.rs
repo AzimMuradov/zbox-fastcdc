@@ -4,9 +4,9 @@ use std::fmt::{self, Debug};
 use std::io::{Result as IoResult, Seek, SeekFrom, Write};
 use std::ptr;
 
-const MIN_SIZE: usize = 16 * 1024; // minimal chunk size, 16k
-const AVG_SIZE: usize = 32 * 1024; // average chunk size, 32k
-const MAX_SIZE: usize = 64 * 1024; // maximum chunk size, 64k
+const MIN_SIZE: usize = 2 * 1024; // minimal chunk size, 2k
+const AVG_SIZE: usize = 2 * 1024; // average chunk size, 2k
+const MAX_SIZE: usize = 32 * 1024; // maximum chunk size, 32k
 
 // writer buffer length
 const WTR_BUF_LEN: usize = 8 * MAX_SIZE;
