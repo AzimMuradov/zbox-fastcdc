@@ -1,4 +1,4 @@
-use fastcdc::v2020::FastCDC;
+use fastcdc::v2020::{FastCDC, Normalization};
 use std::cmp::min;
 use std::fmt::{self, Debug};
 use std::io::{Result as IoResult, Seek, SeekFrom, Write};
@@ -7,6 +7,8 @@ use std::ptr;
 const MIN_SIZE: usize = 2 * 1024; // minimal chunk size, 2k
 const AVG_SIZE: usize = 2 * 1024; // average chunk size, 2k
 const MAX_SIZE: usize = 32 * 1024; // maximum chunk size, 32k
+
+const NORMALIZATION_LEVEL: Normalization = Normalization::Level2;
 
 // writer buffer length
 const WTR_BUF_LEN: usize = 8 * MAX_SIZE;
@@ -59,11 +61,12 @@ impl<W: Write + Seek> Write for Chunker<W> {
         while self.pos < self.buf_clen {
             self.pos -= MIN_SIZE;
 
-            let (hash, cut_point) = FastCDC::new(
+            let (hash, cut_point) = FastCDC::with_level(
                 &*self.buf,
                 MIN_SIZE as u32,
                 AVG_SIZE as u32,
                 MAX_SIZE as u32,
+                NORMALIZATION_LEVEL,
             )
             .cut(self.pos, self.buf_clen - self.pos);
 
